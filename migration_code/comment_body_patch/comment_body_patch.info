@@ -1,0 +1,5 @@
+name = comment body patch
+package = AMA
+description = re-save comment for forum
+core = 7.x
+files[] = comment_body_patch.module

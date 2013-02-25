@@ -1,0 +1,122 @@
+<?php
+
+function migrate_poll_menu() {
+    $items['migrate_poll'] = array(
+      'title' => 'migrate poll',
+      'page callback' => 'migrate_poll_page',
+      'access callback' => TRUE,
+      'type' => MENU_CALLBACK,
+    );
+
+  return $items;
+}
+
+function migrate_poll_page() {
+  _poll_table_migration();
+  _poll_choice_migration();
+  db_set_active('drupal5'); // Switch databases.
+  
+  $query = db_select('node', 'n');
+  $query->leftjoin('node_revisions', 'nr', 'nr.vid = n.vid');
+  $query->orderBy('n.nid', 'asc');
+  $query->fields('n');
+  $query->fields('nr', array('body', 'teaser', 'format'));
+  $query->condition('n.type', 'poll');
+  $result = $query->execute();
+  
+  foreach ($result as $row) {
+    $node = (object) array(
+      'type' => 'poll',
+      'nid' => $row->nid,
+      'vid' => $row->vid,
+      'uid' => 1,
+      'status' => $row->status,
+      'language' => LANGUAGE_NONE,
+      'created' => $row->created,
+      'changed' => $row->changed,
+      'comment' => $row->comment,
+      'promote' => $row->promote,
+      'title' => $row->title,
+      'log' => '',
+      'vote' => -1,
+      'allowvotes' => 1,
+      'active' => 1,
+      'runtime' => 0,
+    );
+    db_set_active('drupal5'); // Switch databases.
+// Migrate poll results.
+    $query = db_select('poll_choices', 'pc');
+    $query->fields('pc');
+    $query->condition('pc.nid', $row->nid);
+    $poll_results = $query->execute();
+    $i = 1;
+    foreach ($poll_results as $poll) {
+      $node->choice[$i] = array( 
+        'chid' => $poll->chid,
+        'chtext' => $poll->chtext,
+        'chvotes' => $poll->chvotes,
+        'weight' => $poll->chorder,
+      );
+      $i++;
+    }
+// save node
+    db_set_active('default');
+        //dpm($node);
+    drupal_write_record('node', $node);
+    drupal_write_record('node_revision', $node);
+    node_save($node);
+  }
+  _poll_vote_details();
+  return t('finished');
+}
+//migrate poll vote details
+function _poll_vote_details() {
+  db_set_active('drupal5');
+  $vote_results = db_query('select distinct poll_choices.chid, poll_votes.nid, poll_votes.uid, poll_votes.hostname from poll_votes left join poll_choices on poll_votes.nid = poll_choices.nid and poll_votes.chorder = poll_choices.chorder');
+  foreach ($vote_results as $vote) {
+    db_set_active('default');
+    //dpm($vote);
+    $result = db_insert('poll_vote')
+      ->fields(array(
+        'chid' => $vote->chid,
+        'nid' => $vote->nid,
+        'uid' => $vote->uid, 
+        'hostname' => $vote->hostname,
+        'timestamp' => 0,
+      ))
+      ->execute();
+  } 
+}
+//migrate poll table
+function _poll_table_migration() {
+  db_set_active('drupal5');
+  $poll_results = db_query('select * from {poll}');
+  foreach ($poll_results as $poll) {
+    db_set_active('default');
+    $result = db_insert('poll')
+      ->fields(array(
+        'nid' => $poll->nid,
+        'runtime' => $poll->runtime,
+        'active' => $poll->active,
+      ))
+      ->execute();
+  }
+}
+//migrate poll_choice table
+function _poll_choice_migration() {
+  db_set_active('drupal5');
+  $choice_results = db_query('select * from {poll_choices}');
+  foreach ($choice_results as $choice) {
+    db_set_active('default');
+    $result = db_insert('poll_choice')
+      ->fields(array(
+        'chid' => $choice->chid,
+        'nid' => $choice->nid,
+        'chtext' => $choice->chtext,
+        'chvotes' => $choice->chvotes,
+        'weight' => $choice->chorder,
+      ))
+      ->execute();
+  }
+}
+    

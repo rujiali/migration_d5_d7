@@ -1,0 +1,117 @@
+<?php
+/**
+ * Implementation of hook_menu().
+ */
+function date_published_menu() {
+  $items = array();
+
+  $items['date_published'] = array(
+    'title' => 'date published',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('date_published_form'),
+    'access callback' => TRUE,
+  );
+
+  return $items;
+}
+
+function date_published_form() {
+  drupal_set_message('you are really going to do it???');
+  $form['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('start'),
+  );
+  return $form;
+}
+
+function date_published_form_submit($form, &$form_state) {
+  $batch = array(
+    'title' => t('replacing date'),
+    'operations' => date_published_batch_operations(),
+    'finished' => 'date_published_batch_finished',
+  );
+  batch_set($batch);
+}
+
+function date_published_batch_operations() {
+  $operations = array();
+  $operations[] = array('date_published_replace', array());
+  return $operations;
+
+}
+
+function date_published_batch_finished($success, $results, $operations) {
+  if ($success) {
+    $message = t('success');
+  } else {
+    $message = t('failed');
+  }
+  drupal_set_message($message);
+}
+
+function date_published_replace(&$context) {
+  if (empty($context['sandbox'])) {
+    $query = db_select('node');
+    $query->condition('type', array('feed', 'feed_item', 'forum', 'poll', 'webform'), 'NOT IN');
+    $query->addExpression('COUNT(nid)', 'count');
+    $max = $query->execute()->fetchField();
+
+    $context['sandbox'] = array(
+      'progress' => 0,
+      'current_node' => 0,
+      'max' => $max,
+    );
+  }
+  $limit = 20;
+  $query = db_select('node', 'n');
+  $query->fields('n', array('nid'));
+  $query->condition('n.type', array('feed', 'feed_item', 'forum', 'poll', 'webform'), 'NOT IN');
+  $query->condition('n.nid', $context['sandbox']['current_node'], '>');
+  $query->orderBy('n.nid');
+  $query->range(0, $limit);
+
+  $result = $query->execute();
+
+  foreach ($result as $row) {
+    $nid = $row->nid;
+    $node = node_load($nid);
+    if (isset($node->field_datepublished) && isset($node->field_datepublished['und'])) {
+      $date_published = $node->field_datepublished['und'][0]['value'];
+      $parts = explode(" ", $date_published);
+      $date_published = $parts[0];
+      $time_published = $parts[1];
+      $fulldate = explode("-", $date_published);
+      $fulltime = explode(":", $time_published);
+      $year = $fulldate[0];
+      $month = $fulldate[1];
+      $day = $fulldate[2];
+      $hour = $fulltime[0];
+      $minute = $fulltime[1];
+      $second = $fulltime[2];
+      //drupal_set_message($day.'/'.$month.'/'.$year);
+      $timestamp = strtotime($year . $month . $day . "T" . $hour . ":" . $minute . ":" . $second);
+      drupal_set_message($timestamp);
+      $changed = $node->changed;
+      // Checks the changed date to alter it if the date is
+      // prior to the migration date
+      if ($changed < $timestamp) {
+        $node->changed = $timestamp;
+      }
+
+      // fix null file field
+      if (isset($node->field_file['und']) && $node->field_file['und'][0] == null) {
+        $node->field_file = null;
+      }
+
+      $node->created = $timestamp;
+
+      node_save($node);
+    }
+    $context['message'] = t('Replacing @title', array('@title' => $node->title));
+    $context['sandbox']['current_node'] = $row->nid;
+    $context['sandbox']['progress']++;
+  }
+  if ($context['sandbox']['progress'] != $context['sandbox']['max']) {
+    $context['finished'] = $context['sandbox']['progress'] / $context['sandbox']['max'];
+  }
+}

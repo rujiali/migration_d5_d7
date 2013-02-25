@@ -1,0 +1,24 @@
+<?php
+
+function migrate_group_role_menu() {
+  $items['create_group_role'] = array(
+    'title' => 'Create group role',
+    'page callback' => 'create_group_role_page',
+    'access callback' => TRUE,
+    'type' => MENU_CALLBACK,
+  );
+  return $items;
+}
+
+function create_group_role_page() {
+  $result = db_query("select title from {node} where title != '' and type = 'group'");
+  foreach ($result as $row) {
+    $role_name = $row->title;
+    if(!user_role_load_by_name($role_name)){
+      $role = new stdClass();
+      $role->name = $role_name;
+      user_role_save($role);
+    }
+  }
+  return t('Finished as Josh Said');
+}

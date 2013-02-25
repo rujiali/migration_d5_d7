@@ -1,0 +1,5 @@
+name = Migrate Poll		
+core = 7.x
+package = "AMA"
+php = 5.2
+

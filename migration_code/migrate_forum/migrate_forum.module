@@ -1,0 +1,82 @@
+<?php
+
+function migrate_forum_menu() {
+  $items['migrate_forum'] = array(
+    'title' => 'Migrate Forums',
+    'page callback' => 'migrate_forum_page',
+    'access callback' => TRUE,
+    'type' => MENU_CALLBACK,
+  );
+  return $items;
+}
+
+function migrate_forum_page() {
+  db_set_active('drupal5');
+
+  $result = db_query("select * from node join node_comment_statistics on node.nid = node_comment_statistics.nid where type = 'forum'");
+  foreach ($result as $row) {
+    db_set_active('drupal5');
+    $nid = $row->nid;
+    $last_comment_timestamp = $row->last_comment_timestamp;
+    $last_comment_uid = $row->last_comment_uid;
+    $last_comment_name = $row->last_comment_name;
+    $comment_count = $row->comment_count;
+    $result_node = db_query("select * from node join node_revisions on node.vid = node_revisions.vid where node.nid = :nid", array(':nid' => $nid));
+    foreach ($result_node as $result1) {
+      db_set_active('drupal5');
+      $node = (object) array(
+        'type' => $row->type == 'story' ? 'article' : $row->type,
+        'nid' => $row->nid,
+        'vid' => $result1->vid,
+        'uid' => $result1->uid,
+        'status' => $row->status,
+        'language' => 'und',
+        'sticky' => $row->sticky,
+        'created' => $row->created,
+        'changed' => $row->changed,
+        'comment' => $row->comment,//2 for open comment
+        'promote' => $row->promote,
+        'title' => $result1->title,
+        'body' => array(LANGUAGE_NONE => array(array('value' => $result1->body, 'summary' => $result1->teaser, 'format' => 'full_html'))),
+        'log' => '',
+        'last_comment_timestamp' => $last_comment_timestamp,
+        'last_comment_uid' => $last_comment_uid,
+        'last_comment_name' => $last_comment_name,
+        'comment_count' => $comment_count,
+      );
+
+// Migrate parent forum.
+      $query = db_select('term_node', 'tn');
+      $query->join('term_data', 'td', 'tn.tid = td.tid');
+      $query->fields('tn');
+      $query->fields('td');
+      $query->condition('tn.nid', $row->nid);
+      $taxonomys = $query->execute();
+      foreach ($taxonomys as $taxonomy) {
+        if ($taxonomy->tid) {
+          $node->taxonomy_forums['und'][] = array('tid' => $taxonomy->tid);
+          $node->forum_tid = $taxonomy->tid;
+        }
+      }
+// Migrate file uploads to a file field.
+      $query = db_select('file_revisions', 'fr');
+      $query->fields('fr');
+      $query->condition('fr.vid', $result1->vid);
+      $file_results = $query->execute();
+      //JOSH PLAYING FOR REPLICATED URI
+      $previousPath = array();
+      //DONE
+      foreach ($file_results as $file) {
+        if ($file->fid) {
+          $node->field_file[LANGUAGE_NONE][] = array('fid' => $file->fid, 'display' => $file->list, 'description' => $file->description);
+        }
+      }
+// To maintain the same NID, use drupal_write_record() first, then save.
+      db_set_active('default');
+      drupal_write_record('node', $node);
+      drupal_write_record('node_revision', $node);
+      node_save($node);
+    }
+  }
+  return t('Finished as Josh said');
+}  

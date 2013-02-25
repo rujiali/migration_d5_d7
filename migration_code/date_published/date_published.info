@@ -1,0 +1,5 @@
+; $Id$
+name = date published field fix 
+description = convert date published field value to created value
+core = 7.x
+package = AMA

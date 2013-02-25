@@ -1,0 +1,89 @@
+<?php
+/**
+ * Implementatipon of hook_menu()
+ */
+function comment_body_patch_menu() {
+  $items = array();
+  $items['comment_body_patch'] = array(
+    'title' => 'forum comment body patch',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('comment_body_patch_form'),
+    'access callback' => TRUE,
+  );
+  return $items;
+}
+
+function comment_body_patch_form() {
+  drupal_set_message('you are really going to do it???');
+  $form['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('start'),
+  );
+  return $form;
+}
+
+function comment_body_patch_form_submit($form, &$form_state) {
+  $batch = array(
+    'title' => t('re-save comment for forum'),
+    'operations' => comment_body_patch_batch_operations(),
+    'finished' => 'comment_body_patch_batch_finished',
+  );
+  
+  batch_set($batch);
+}
+
+function comment_body_patch_batch_operations() {
+  $operations = array();
+  $operations[] = array('comment_resave', array());
+  return $operations;
+}
+
+function comment_body_patch_batch_finished($success, $results, $operations) {
+  if ($success) {
+    $message = t('success');
+  } else {
+    $message = t('failed');
+  }
+  drupal_set_message($message);
+}
+
+function comment_resave(&$content) {
+  db_set_active('drupal5');
+  if (empty($context['sandbox'])) {
+    $query = db_select('comments', 'c');
+    $query->join('node', 'n', 'c.nid = n.nid');
+    $query->addExpression('COUNT(cid)', 'count');
+    $query->condition('n.type', 'forum', '=');
+    $max = $query->execute()->fetchField();
+    dd($max);
+
+    $context['sandbox'] = array(
+      'progress' => 0,
+      'current_comment' => 1,
+      'max' => $max,
+    );
+  }
+  
+  $query = db_select('comments', 'c');
+  $query->join('node', 'n', 'c.nid = n.nid');
+  $query->fields('c', array('cid', 'comment'));
+  $query->condition('n.type', 'forum', '=');
+  $query->condition('c.cid', $context['sandbox']['current_comment'], '>');
+  $query->orderBy('c.cid');
+
+  $result = $query->execute();
+  
+  db_set_active('default');
+  foreach ($result as $row) {
+    $comment = comment_load($row->cid);
+    //dd ($row->comment);
+    $comment->comment_body['und'][0] = array('value' => $row->comment, 'format' => 'filtered_html');
+    comment_save($comment);
+    $context['message'] = t('re-saving @cid', array('@cid' => $row->cid));
+    $context['sandbox']['current_comment'] = $cid;
+    $context['sandbox']['progress']++;
+  }
+  if ($context['sandbox']['progress'] != $context['sandbox']['max']) {
+    $context['finished'] = $context['sandbox']['progress'] / $context['sandbox']['max'];
+  }
+} 

@@ -1,0 +1,48 @@
+<?php
+/*
+ * To migrate ausmed, we need to change the database name and assign a new vid when save the term.
+ * We also need to create new vocabulary for edition, and add all editions to terms. 
+ */
+function migrate_taxonomy_menu() {
+  $items['migrate_taxonomy'] = array(
+    'title' => 'Migrate taxonomy',
+    'page callback' => 'migrate_taxonomy_page',
+    'access callback' => TRUE,
+    'type' => MENU_CALLBACK,
+  );
+  return $items;
+}
+
+function migrate_taxonomy_page() {
+  db_set_active('ausmed');
+
+  $query = "select distinct name from {term_data}";
+  $queryresult = db_query($query);
+  foreach ($queryresult as $row) {
+    $vid = 11;
+    $name = $row->name;
+    db_set_active('default');
+    taxonomy_term_save((object) array(
+      'vid' => $vid,
+      'name' => $name,
+      'description' => $name,
+    ));
+  }  
+
+  db_set_active('ausmed');
+
+  $vid_edition = 10;
+  $query = 'select title from {node} where type = :type and status = :status';
+  $queryresult = db_query($query, array(':type' => 'homepage', ':status' => 1));
+  foreach ($queryresult as $row) {
+    db_set_active('default');
+    taxonomy_term_save((object) array(
+      'vid' => $vid_edition,
+      'name' => $row->title,
+      'description' => $row->title,
+    ));
+  }
+
+  return t('finish as josh said');
+}
+

@@ -1,0 +1,28 @@
+<?php
+function migrate_file_patch_menu() {
+  $items['migrate_file_patch'] = array(
+    'title' => 'Migrate file patch',
+    'page callback' => 'migrate_file_patch_page',
+    'access callback' => TRUE,
+    'type' => MENU_CALLBACK,
+  );
+  return $items;
+}
+
+function migrate_file_patch_page() {
+  $result = db_query("select * from file_managed where type = ''");
+  foreach ($result as $row) {
+    $fid = $row->fid;
+    $filemime = $row->filemime;
+    //$filetype = mime_header_encode($filemime);
+    $filetype = explode("/", $filemime);
+    //dpm($filetype[0]);
+    db_update('file_managed')
+      ->fields(array(
+        'type' => $filetype[0],
+      ))
+      ->condition('fid', $fid)
+      ->execute();
+  }
+  return t('finish as Josh said');
+}

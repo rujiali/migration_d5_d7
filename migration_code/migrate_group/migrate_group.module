@@ -1,0 +1,23 @@
+<?php
+
+function migrate_group_menu() {
+  $items['migrate_group'] = array(
+    'title' => 'Migrate Groups',
+    'page callback' => 'migrate_group_page',
+    'access callback' => TRUE,
+    'type' => MENU_CALLBACK,
+  );
+  return $items;
+}
+
+function migrate_group_page() {
+  $result = db_query("select nid from node where type = 'group'");
+  foreach ($result as $row) {
+    $nid = $row->nid;
+    $node = node_load($nid);
+    $node->group_group['und'][] = array('value' => 1);
+    node_save($node);
+  }
+  return t('Finished as Josh said');
+}
+  

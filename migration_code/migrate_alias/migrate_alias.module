@@ -1,0 +1,33 @@
+<?php
+
+function migrate_alias_menu() {
+  $items['migrate_alias'] = array(
+    'title' => 'Migrate alias',
+    'page callback' => 'migrate_alias_page',
+    'access callback' => TRUE,
+    'type' => MENU_CALLBACK,
+  );
+  return $items;
+}
+
+function migrate_alias_page() {
+  db_set_active('drupal5');
+  $result = db_query("select * from url_alias");
+  foreach ($result as $row) {
+    db_set_active('default');
+    
+    $pid = $row->pid;
+    $src = $row->src;
+    $dest = $row->dst; 
+    
+    $pid = db_insert('url_alias')
+      ->fields(array(
+        'pid' => $pid,
+        'source' => $src,
+        'alias' => $dest,
+        'language' => 'und',
+      ))
+      ->execute();
+  }
+  return t('finish');    
+}

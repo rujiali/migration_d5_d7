@@ -1,0 +1,113 @@
+<?php
+
+/**
+ * Implements hook_menu
+ * @return array 
+ */
+function update_forum_posts_menu() {
+    $items['update_forum_posts'] = array(
+      'title' => t('Update forum posts'),
+      'page callback' => 'drupal_get_form',
+      'page arguments' => array('update_forum_posts_page'),
+      'access arguments' => array('access administration pages'),
+      'type' => MENU_CALLBACK,
+    );
+
+  return $items;
+}
+
+/**
+ *
+ * @param type $form
+ * @param type $form_state 
+ */
+function update_forum_posts_page($form, &$form_state) {
+  //$form = array();
+  $form['title'] = array(
+    '#type' => 'markup',
+    '#markup' => '<p>Click the button to rock and roll</p>',
+  );
+  
+  $form['submit'] = array(
+    '#type' => 'submit',
+    '#value' => 'Rock \'n\' Roll',
+  );
+  
+  return $form;
+}
+
+/**
+ * Submit function for the form
+ * 
+ */
+function update_forum_posts_page_submit($form, &$form_state) {
+
+  $batch = array(
+    'title' => t('Re-save forum pages for permissions'),
+    'operations' => array(array('update_forum_posts_batch_operation', array())),
+    'finished' => 'update_forum_posts_batch_finished',
+  );
+
+  batch_set($batch);
+
+}
+
+function update_forum_posts_batch_operation(&$context) {
+  
+  if (empty($context['sandbox'])) {
+    $query = db_select('node', 'n');
+    $query->condition('type', 'page', '=');
+    $query->addExpression('COUNT(nid)', 'count');
+    $max = $query->execute()->fetchField();
+    $context['sandbox']['current_node'] = 0;
+
+    $context['sandbox'] = array(
+      'progress' => 0,
+      'current_node' => 0,
+      'max' => $max,
+    );  
+  }
+  
+  $limit = 30;
+  $result = db_select('node', 'n')
+    ->fields('n', array('nid'))
+    ->condition('type', 'page', '=')
+    ->condition('status', '1', '=')
+    ->condition('n.nid', $context['sandbox']['current_node'], '>')
+    ->range(0, $limit)
+    ->execute();
+
+  foreach ($result as $element) {
+    $nid = $element->nid;
+    $node = node_load($nid);
+    $context['message'] = t('Ignoring node @nid', array('@nid' => $nid));
+   // if ($node->group_audience) {
+      $node->group_content_access['und'][0]['value'] = 0;
+      $context['message'] = t('Updating node @nid', array('@nid' => $nid));
+      if (isset($node->field_file['und']) && !isset($node->field_file['und'][0])) {
+        $node->field_file = NULL;
+      }
+      node_save($node);
+      
+
+   // }
+    $context['sandbox']['current_node'] = $nid;
+    
+  }
+  $context['sandbox']['progress'] += $limit;
+  if ($context['sandbox']['progress'] != $context['sandbox']['max']) {
+    $context['finished'] = $context['sandbox']['progress'] / $context['sandbox']['max'];
+  }
+  
+}
+
+function update_forum_posts_batch_finished($success, $results, $operations) {
+  if ($success) {
+    $message = t('Node resaves successful!');
+    $status = 'status';
+  } else {
+    $message = t('Node saves failed');
+    $status = 'error';
+  }
+  drupal_set_message($message, $status);
+}

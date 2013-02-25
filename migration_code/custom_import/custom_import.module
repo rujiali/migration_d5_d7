@@ -1,0 +1,357 @@
+<?php
+// $Id$
+
+/**
+ * @file
+ * A module to perform custom migration from one version of Drupal to another.
+ */
+
+/**
+ * Implementation of hook_menu().
+ */
+function custom_import_menu() {
+  $items = array();
+
+  $items['admin/content/custom-import'] = array(
+    'title' => 'Custom import',
+    'description' => 'Run custom import routines to migrate from one Drupal version to another.',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('custom_import_form'),
+    'access arguments' => array('administer site configuration'),
+  );
+
+  return $items;
+}
+
+function custom_import_form() {
+  drupal_set_message('Are you sure you want to run the custom import script?  No going back without re-installing the database!!!', 'warning');
+  $form['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Start import'),
+  );
+
+  return $form;
+}
+
+function custom_import_form_submit($form, &$form_state) {
+  $batch = array(
+    'title' => t('Importing data'),
+    'operations' => custom_import_batch_operations(),
+    'finished' => 'custom_import_batch_finished',
+  );
+
+  batch_set($batch);
+}
+
+function custom_import_batch_operations() {
+  $operations = array();
+
+  $operations[] = array('custom_import_batch_files', array());
+  $operations[] = array('custom_import_batch_nodes', array());
+  $operations[] = array('custom_import_batch_comments', array());
+
+  return $operations;
+}
+
+function custom_import_batch_finished($success, $results, $operations) {
+  if ($success) {
+    $message = t('Import finished successfully.');
+  }
+  else {
+    $message = t('Finished with an error.');
+  }
+  drupal_set_message($message);
+}
+
+
+function custom_import_batch_files(&$context) {
+  db_set_active('drupal5'); // Switch databases.
+
+  // Build the total import count.
+  if (empty($context['sandbox'])) {
+    $query = db_select('files');
+    $query->addExpression('COUNT(fid)', 'count');
+    $max = $query->execute()->fetchField();
+
+    $context['sandbox'] = array(
+      'progress' => 0,
+      'current_file' => 0,
+      'max' => $max,
+    );
+  }
+
+  $limit = 40; // Number of files to process at a time.
+  $query = db_select('files', 'f');
+  $query->innerJoin('node', 'n', 'f.nid = n.nid');
+  $query->fields('f');
+  $query->fields('n', array('created'));
+  $query->orderBy('f.fid', 'asc');
+  $query->condition('fid', $context['sandbox']['current_file'], '>');
+  $query->range(0, $limit);
+  $result = $query->execute();
+  
+  //JOSH PLAYING FOR REPLICATED URI
+  $previousPath = array();
+  //DONE
+  foreach ($result as $row) {
+    if (!in_array(strtoupper($row->filepath), $previousPath)) {
+      //print ($row->filepath);
+      $file = (object) array(
+        'fid' => $row->fid,
+        'uid' => 1,
+        'filename' => $row->filename,
+        'uri' => $row->filepath,
+        'filemime' => $row->filemime,
+        'filesize' => $row->filesize,
+        'status' => 1,
+        'timestamp' => $row->created,
+      );
+
+      db_set_active('default');
+      drupal_write_record('file_managed', $file);
+
+      array_push($previousPath, strtoupper($row->filepath));
+    }
+    $context['message'] = t('Importing file @name', array('@name' => $file->filename));
+    $context['sandbox']['current_file'] = $row->fid;
+  }
+
+  db_set_active('default'); // Switch back.
+  
+  $context['sandbox']['progress'] += $limit;
+
+  if ($context['sandbox']['progress'] != $context['sandbox']['max']) {
+    $context['finished'] = $context['sandbox']['progress'] / $context['sandbox']['max'];
+  }
+}
+
+function custom_import_batch_nodes(&$context) {
+  db_set_active('drupal5'); // Switch databases.
+
+  // Build the total import count.
+  if (empty($context['sandbox'])) {
+    $query = db_select('node');
+    $query->condition('type', array('feed', 'feed_item', 'forum', 'poll', 'webform'), 'NOT IN');
+    $query->addExpression('COUNT(nid)', 'count');
+    $max = $query->execute()->fetchField();
+      // I wanna see the node ID!!!!!
+      $fp = fopen('/var/www/data.txt', 'w');
+      fwrite($fp, $max);
+      fclose($fp);
+
+    $context['sandbox'] = array(
+      'progress' => 0,
+      'current_node' => 0,
+      'max' => $max,
+    );
+  }
+
+  $limit = 20; // Number of nodes to process at a time.
+  $query = db_select('node', 'n');
+  $query->leftjoin('node_revisions', 'nr', 'nr.vid = n.vid');
+  $query->orderBy('n.nid', 'asc');
+  $query->fields('n');
+  $query->fields('nr', array('body', 'teaser', 'format'));
+  $query->condition('n.nid', $context['sandbox']['current_node'], '>');
+  $query->condition('n.type', array('feed', 'feed_item', 'forum', 'poll', 'webform'), 'NOT IN');
+  $query->range(0, $limit);
+  $result = $query->execute();
+
+  foreach ($result as $row) {
+    $node = (object) array(
+      'type' => $row->type == 'story' ? 'article' : $row->type,
+      'nid' => $row->nid,
+      'vid' => $row->vid,
+      'uid' => $row->uid,
+      'status' => $row->status,
+      'language' => LANGUAGE_NONE,
+      'created' => $row->created,
+      'changed' => $row->changed,
+      'comment' => $row->comment,
+      'promote' => $row->promote,
+      'title' => $row->title,
+      'body' => array(LANGUAGE_NONE => array(array('value' => $row->body, 'summary' => $row->teaser, 'format' => 'full_html'))),
+      'teaser' => $row->teaser,
+      'log' => '',
+    );
+
+    db_set_active('drupal5'); // Switch databases.
+
+    // Migrate file uploads to a file field.
+    $query = db_select('file_revisions', 'fr');
+    $query->fields('fr');
+    $query->condition('fr.vid', $row->vid);
+    $file_results = $query->execute();
+    //JOSH PLAYING FOR REPLICATED URI
+    $previousPath = array();
+    //DONE
+    foreach ($file_results as $file) {
+      if (!in_array($file->filepath, $previousPath)) {
+        if ($file->fid) {
+          $node->field_file[LANGUAGE_NONE][] = array('fid' => $file->fid, 'display' => $file->list, 'description' => $file->description);
+          array_push($previousPath, $file->filepath);
+        }
+      }
+    }
+// Migrate taxonomies.
+      $query = db_select('term_node', 'tn');
+      $query->join('term_data', 'td', 'tn.tid = td.tid');
+      $query->fields('tn');
+      $query->fields('td');
+      $query->condition('tn.nid', $row->nid);
+      $taxonomys = $query->execute();
+      foreach ($taxonomys as $taxonomy) {
+        if ($taxonomy->tid and $taxonomy->vid == 2) {
+          $node->field_taxonomy['und'][] = array('tid' => $taxonomy->tid);
+        }
+        if ($taxonomy->tid and $taxonomy->vid == 8) {
+          $node->field_media['und'][] = array('tid' => $taxonomy->tid);
+        }
+      }
+// Migrate datepublished field
+      $query = db_select('content_field_datepublished', 'f');
+      $query->fields('f');
+      $query->condition('vid', $row->vid);
+      $date_results = $query->execute();
+      foreach ($date_results as $date) {
+        if ($date->field_datepublished_value) {
+          $node->field_datepublished['und'][0] = array('value' => $date->field_datepublished_value);
+        }
+      }
+// Migrate contact officer
+      $query = db_select('content_field_contactofficer', 'f');
+      $query->fields('f');
+      $query->condition('vid', $row->vid);
+      $officer_results = $query->execute();
+      foreach ($officer_results as $officer) {
+        if ($officer->field_contactofficer_value) {
+          $node->field_contactofficer['und'][0] = array('value' => $officer->field_contactofficer_value);
+        }
+      }
+// Migrate dockey
+      $query = db_select('content_field_dockey', 'f');
+      $query->fields('f');
+      $query->condition('vid', $row->vid);
+      $dockey_results = $query->execute();
+      foreach ($dockey_results as $dockey) {
+        if ($dockey->field_dockey_value) {
+          $node->field_dockey['und'][0] = array('value' => $dockey->field_dockey_value);
+        }
+      }
+// Migrate tag
+      $query = db_select('content_field_tag', 'f');
+      $query->fields('f');
+      $query->condition('vid', $row->vid);
+      $tag_results = $query->execute();
+      foreach ($tag_results as $tag) {
+        if ($tag->field_tag_value) {
+          $node->field_tag['und'][0] = array('value' => $tag->field_tag_value);
+        }
+      }
+// Migrate related page
+      $query = db_select('content_field_related_page', 'f');
+      $query->fields('f');
+      $query->condition('vid', $row->vid);
+      $related_page_results = $query->execute();
+      foreach ($related_page_results as $related_page) {
+        if ($related_page->field_related_page_nid) {
+          $node->field_related_page['und'][0] = array('nid' => $related_page->field_related_page_nid);
+        }
+      }
+// Migrate related link
+      $query = db_select('content_field_related_link', 'f');
+      $query->fields('f');
+      $query->condition('vid', $row->vid);
+      $related_link_results = $query->execute();
+      foreach ($related_link_results as $related_link) {
+        if ($related_link->field_related_link_url) {
+          $node->field_related_link['und'][0] = array('url' => $related_link->field_related_link_url,
+                                                   'title' => $related_link->field_related_link_title,
+                                                   'attribute' => array());
+        }
+      }
+
+
+    // To maintain the same NID, use drupal_write_record() first, then save.
+    db_set_active('default');
+    if ($node->title != '') { 
+      drupal_write_record('node', $node);
+      drupal_write_record('node_revision', $node);
+      node_save($node);
+    }
+    $context['message'] = t('Importing node @title', array('@title' => $node->title));
+    $context['sandbox']['current_node'] = $row->nid;
+
+  }
+
+  db_set_active('default'); // Switch back.
+
+      // I wanna see the node ID!!!!!
+      $fp = fopen('/var/www/data1.txt', 'w');
+      fwrite($fp, $context['sandbox']['progress']);
+      fclose($fp);
+  $context['sandbox']['progress'] += $limit;
+  if ($context['sandbox']['progress'] != $context['sandbox']['max']) {
+    $context['finished'] = $context['sandbox']['progress'] / $context['sandbox']['max'];
+  }
+}
+
+//custom_import_batch_news_comments
+
+function custom_import_batch_comments(&$context) {
+//attach comment statistic patch
+  db_set_active('drupal5');
+
+  $result = db_query("select * from node_comment_statistics");
+  db_set_active('default');
+
+  foreach($result as $comment) {
+     $comment->cid = 0;
+     db_query("insert into {node_comment_statistics} (nid, last_comment_timestamp, last_comment_name, last_comment_uid, comment_count) values ('$comment->nid', '$comment->last_comment_timestamp', '$comment->last_comment_name', '$comment->last_comment_uid', '$comment->comment_count')");
+  }
+//start to migrate comment
+  $previous_db = db_set_active('drupal5'); // Switch databases.
+
+  // Build the total import count.
+  if (empty($context['sandbox'])) {
+    $query = db_select('comments');
+    $query->addExpression('COUNT(cid)', 'count');
+    $max = $query->execute()->fetchField();
+
+    $context['sandbox'] = array(
+      'progress' => 0,
+      'current_comment' => 0,
+      'max' => $max,
+    );
+  }
+
+  $limit = 20; // Number of nodes to process at a time.
+  $query = db_select('comments', 'c');
+  $query->fields('c');
+  $query->orderBy('c.cid', 'asc');
+  $query->condition('cid', $context['sandbox']['current_comment'], '>');
+  $query->range(0, $limit);
+  $result = $query->execute();
+
+  db_set_active('default');
+  foreach ($result as $row) {
+    $comment = (object) $row;
+    $comment->language = LANGUAGE_NONE;
+    $comment->status = (int) !$row->status; // Flipped between D6 and D7.
+    $comment->created = $row->timestamp;
+    $comment->changed = $row->timestamp;
+    $comment->comment_body[LANGUAGE_NONE][0] = array('value' => $row->comment, 'format' => 'filtered_html');
+
+    // To maintain the same CID, use drupal_write_record() first, then save.
+    drupal_write_record('comment', $comment);
+    comment_save($comment);
+
+    $context['message'] = t('Importing comment @subject', array('@subject' => $comment->subject));
+    $context['sandbox']['current_comment'] = $row->cid;
+  }
+  $context['sandbox']['progress'] += $limit;
+
+  if ($context['sandbox']['progress'] != $context['sandbox']['max']) {
+    $context['finished'] = $context['sandbox']['progress'] / $context['sandbox']['max'];
+  }
+}
